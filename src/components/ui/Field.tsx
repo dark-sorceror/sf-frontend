@@ -1,3 +1,4 @@
+import PhotoField from "@/components/contacts/PhotoField";
 import type { ContactFieldSpec } from "@/lib/contacts/schema";
 
 const CONTROL =
@@ -53,7 +54,15 @@ export default function Field({
         )}
       </label>
 
-      {field.type === "textarea" ? (
+      {field.type === "photo" ? (
+        <PhotoField
+          id={id}
+          name={field.name}
+          defaultValue={defaultValue}
+          invalid={Boolean(error)}
+          describedBy={error ? errorId : undefined}
+        />
+      ) : field.type === "textarea" ? (
         <textarea {...shared} rows={4} className={`${shared.className} resize-y`} />
       ) : (
         <input {...shared} type={field.type ?? "text"} />

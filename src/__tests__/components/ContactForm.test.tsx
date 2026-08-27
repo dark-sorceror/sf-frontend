@@ -1,5 +1,5 @@
 import React from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import ContactForm from "@/components/contacts/ContactForm";
 import { makeContact } from "../mocks/handlers";
@@ -14,6 +14,22 @@ function renderForm(action: jest.Mock, contact?: ReturnType<typeof makeContact>)
       cancelHref="/contacts"
     />,
   );
+}
+
+const PHOTO = "data:image/png;base64,iVBORw0KGgo=";
+
+function imageFile(type: string, bytes = 8, name = "ada") {
+  return new File([new Uint8Array(bytes)], name, { type });
+}
+
+function stagedPhoto(container: HTMLElement): string {
+  return container.querySelector<HTMLInputElement>('input[name="photo"]')!.value;
+}
+
+async function submit(action: jest.Mock): Promise<FormData> {
+  await userEvent.click(screen.getByRole("button", { name: /create contact/i }));
+  await waitFor(() => expect(action).toHaveBeenCalled());
+  return action.mock.calls[0][1];
 }
 
 describe("ContactForm", () => {
@@ -86,5 +102,83 @@ describe("ContactForm", () => {
       "href",
       "/contacts",
     );
+  });
+});
+
+describe("ContactForm photo", () => {
+  const noop = () => jest.fn(async (): Promise<FormState> => ({ status: "idle" }));
+
+  it.each([
+    ["image/jpeg", "data:image/jpeg;base64,AAAAAAAAAAA="],
+    ["image/png", "data:image/png;base64,AAAAAAAAAAA="],
+    ["image/webp", "data:image/webp;base64,AAAAAAAAAAA="],
+  ])("previews a %s photo and stages it for submission", async (type, dataUrl) => {
+    const { container } = renderForm(noop());
+
+    await userEvent.upload(screen.getByLabelText(/photo/i), imageFile(type));
+
+    expect(await screen.findByAltText("Selected photo")).toHaveAttribute(
+      "src",
+      dataUrl,
+    );
+    await waitFor(() => expect(stagedPhoto(container)).toBe(dataUrl));
+  });
+
+  it("rejects a format the API does not accept", async () => {
+    const { container } = renderForm(noop());
+
+    // `userEvent.upload` honours the input's `accept`, so a direct change event
+    // is the only way to reach the component's own guard.
+    fireEvent.change(screen.getByLabelText(/photo/i), {
+      target: { files: [imageFile("image/gif")] },
+    });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Choose a JPEG, PNG, or WebP image.",
+    );
+    expect(stagedPhoto(container)).toBe("");
+  });
+
+  it("rejects a file over the size limit before reading it", async () => {
+    const { container } = renderForm(noop());
+
+    await userEvent.upload(
+      screen.getByLabelText(/photo/i),
+      imageFile("image/png", 600 * 1024),
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "That image is larger than 500 KB. Choose a smaller one.",
+    );
+    expect(stagedPhoto(container)).toBe("");
+    expect(screen.queryByAltText("Selected photo")).toBeNull();
+  });
+
+  it("shows the photo a contact already has", () => {
+    const { container } = renderForm(noop(), makeContact({ photo: PHOTO }));
+
+    expect(screen.getByAltText("Selected photo")).toHaveAttribute("src", PHOTO);
+    expect(stagedPhoto(container)).toBe(PHOTO);
+  });
+
+  it("keeps that photo when an unrelated field is edited", async () => {
+    const action = noop();
+    renderForm(action, makeContact({ photo: PHOTO }));
+
+    await userEvent.type(screen.getByLabelText(/phone/i), "9");
+
+    // The picker was never opened, so the full-replacement PUT must still carry
+    // the photo the form was seeded with.
+    expect((await submit(action)).get("photo")).toBe(PHOTO);
+  });
+
+  it("submits an empty photo only once Remove is used", async () => {
+    const action = noop();
+    renderForm(action, makeContact({ photo: PHOTO }));
+
+    await userEvent.click(screen.getByRole("button", { name: /remove photo/i }));
+
+    expect(screen.queryByAltText("Selected photo")).toBeNull();
+    expect((await submit(action)).get("photo")).toBe("");
   });
 });
