@@ -1,10 +1,23 @@
 import { http, HttpResponse } from "msw";
 import { apiBaseUrl } from "@/lib/apiClient";
-import type { Contact, ContactPage } from "@/lib/contacts/types";
+import type { Address, Contact, ContactPage } from "@/lib/contacts/types";
 
 /** Prefix a path with the configured API base so handlers match apiClient URLs. */
 export function api(path: string): string {
   return `${apiBaseUrl}${path}`;
+}
+
+export function makeAddress(overrides: Partial<Address> = {}): Address {
+  return {
+    id: overrides.id ?? 1,
+    type: "Home",
+    address: "1 Market St",
+    city: "San Francisco",
+    state: "CA",
+    postal_code: "94105",
+    country: "USA",
+    ...overrides,
+  };
 }
 
 export function makeContact(overrides: Partial<Contact> = {}): Contact {
@@ -19,13 +32,9 @@ export function makeContact(overrides: Partial<Contact> = {}): Contact {
     phone: "+1-415-555-0101",
     company: "Analytical Engines",
     job_title: "Mathematician",
-    address: null,
-    city: "San Francisco",
-    state: "CA",
-    postal_code: null,
-    country: "USA",
     notes: null,
     photo: null,
+    addresses: [],
     created_at: "2026-08-19T17:04:53.743932Z",
     updated_at: "2026-08-19T17:04:53.743936Z",
     full_name: `${first_name} ${last_name}`,

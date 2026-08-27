@@ -4,6 +4,7 @@ import { useActionState } from "react";
 import { useFormStatus } from "react-dom";
 import Link from "next/link";
 import { AlertCircle, Loader2 } from "lucide-react";
+import AddressListEditor from "@/components/contacts/AddressListEditor";
 import Field from "@/components/ui/Field";
 import Button, { buttonClasses } from "@/components/ui/Button";
 import { CONTACT_FIELD_GROUPS } from "@/lib/contacts/schema";
@@ -50,9 +51,14 @@ export default function ContactForm({
 }) {
   const [state, formAction] = useActionState(action, EMPTY_FORM_STATE);
 
-  function valueFor(name: keyof ContactInput): string {
+  function valueFor(name: Exclude<keyof ContactInput, "addresses">): string {
     return state.values?.[name] ?? contact?.[name] ?? "";
   }
+
+  // The editor is seeded with JSON: the echo from a failed round trip when
+  // there is one, otherwise whatever the API gave us for this contact.
+  const addressesValue =
+    state.values?.addresses ?? JSON.stringify(contact?.addresses ?? []);
 
   return (
     <form action={formAction} noValidate className="space-y-8">
@@ -83,16 +89,24 @@ export default function ContactForm({
             </p>
           </div>
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            {group.fields.map((field) => (
-              <Field
-                key={field.name}
-                field={field}
-                defaultValue={valueFor(field.name)}
-                error={state.fieldErrors?.[field.name]}
-              />
-            ))}
-          </div>
+          {group.addresses ? (
+            <AddressListEditor
+              defaultValue={addressesValue}
+              error={state.fieldErrors?.addresses}
+              errors={state.addressErrors}
+            />
+          ) : (
+            <div className="grid gap-4 sm:grid-cols-2">
+              {group.fields.map((field) => (
+                <Field
+                  key={field.name}
+                  field={field}
+                  defaultValue={valueFor(field.name)}
+                  error={state.fieldErrors?.[field.name]}
+                />
+              ))}
+            </div>
+          )}
         </fieldset>
       ))}
 

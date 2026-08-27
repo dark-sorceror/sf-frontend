@@ -2,6 +2,8 @@ import "server-only";
 
 import { ApiError, apiFetch, apiJson } from "@/lib/apiClient";
 import type {
+  AddressErrors,
+  AddressInput,
   Contact,
   ContactInput,
   ContactPage,
@@ -132,10 +134,35 @@ export function toFieldErrors(
 
   const fieldErrors: Partial<Record<keyof ContactInput, string>> = {};
   for (const issue of detail) {
+    // A problem inside one address is reported against that entry instead.
+    if (issue.loc?.[1] === "addresses") continue;
     const field = issue.loc?.[issue.loc.length - 1];
     if (typeof field === "string" && field !== "body") {
       fieldErrors[field as keyof ContactInput] ??= issue.msg;
     }
   }
   return fieldErrors;
+}
+
+/**
+ * The nested counterpart: FastAPI reports an address problem as
+ * `["body", "addresses", <index>, "<field>"]`, so it lands on that entry.
+ *
+ * Zod already mirrors every rule the API enforces here, so in practice nothing
+ * a user can type gets this far — this keeps a rule the client does not know
+ * about from failing silently.
+ */
+export function toAddressErrors(error: ApiError): AddressErrors {
+  const detail = error.json<{ detail?: ValidationIssue[] }>()?.detail;
+  if (!Array.isArray(detail)) return {};
+
+  const addressErrors: AddressErrors = {};
+  for (const issue of detail) {
+    const [, key, index, field] = issue.loc ?? [];
+    if (key !== "addresses" || typeof index !== "number") continue;
+    if (typeof field !== "string") continue;
+    const entry = (addressErrors[index] ??= {});
+    entry[field as keyof AddressInput] ??= issue.msg;
+  }
+  return addressErrors;
 }
