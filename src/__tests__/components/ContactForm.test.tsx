@@ -1,5 +1,5 @@
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import ContactForm from "@/components/contacts/ContactForm";
 import { makeContact } from "../mocks/handlers";
@@ -180,5 +180,61 @@ describe("ContactForm photo", () => {
 
     expect(screen.queryByAltText("Selected photo")).toBeNull();
     expect((await submit(action)).get("photo")).toBe("");
+  });
+});
+
+describe("ContactForm photo reads", () => {
+  const noop = () => jest.fn(async (): Promise<FormState> => ({ status: "idle" }));
+
+  // Reads finish on their own schedule in a browser, so drive them by hand:
+  // whichever read the component honours is the point of these tests.
+  const pending: { finish: (result: string) => void }[] = [];
+  const RealFileReader = globalThis.FileReader;
+
+  beforeEach(() => {
+    pending.length = 0;
+    class ControlledFileReader {
+      result: string | null = null;
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+      readAsDataURL() {
+        pending.push({
+          finish: (result: string) => {
+            this.result = result;
+            this.onload?.();
+          },
+        });
+      }
+    }
+    globalThis.FileReader = ControlledFileReader as unknown as typeof FileReader;
+  });
+
+  afterEach(() => {
+    globalThis.FileReader = RealFileReader;
+  });
+
+  it("keeps the newest selection when an earlier read finishes last", async () => {
+    const { container } = renderForm(noop());
+    const picker = screen.getByLabelText(/photo/i);
+
+    await userEvent.upload(picker, imageFile("image/png", 8, "first.png"));
+    await userEvent.upload(picker, imageFile("image/png", 8, "second.png"));
+    expect(pending).toHaveLength(2);
+
+    act(() => pending[1].finish("data:image/png;base64,SECOND="));
+    act(() => pending[0].finish("data:image/png;base64,FIRST="));
+
+    expect(stagedPhoto(container)).toBe("data:image/png;base64,SECOND=");
+  });
+
+  it("does not let an in-flight read undo Remove", async () => {
+    const { container } = renderForm(noop(), makeContact({ photo: PHOTO }));
+
+    await userEvent.upload(screen.getByLabelText(/photo/i), imageFile("image/png"));
+    await userEvent.click(screen.getByRole("button", { name: /remove photo/i }));
+
+    act(() => pending[0].finish("data:image/png;base64,LATE="));
+
+    expect(stagedPhoto(container)).toBe("");
   });
 });

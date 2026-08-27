@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ChangeEvent } from "react";
+import { useRef, useState, type ChangeEvent } from "react";
 import { Trash2, User } from "lucide-react";
 import { buttonClasses } from "@/components/ui/Button";
 import {
@@ -38,7 +38,16 @@ export default function PhotoField({
 }) {
   const [photo, setPhoto] = useState(defaultValue);
   const [error, setError] = useState<string | null>(null);
+  const [reading, setReading] = useState(false);
   const errorId = `${id}-file-error`;
+
+  /**
+   * Reads are asynchronous, so a slow read of an earlier pick could otherwise
+   * land after a faster read of a later one — or after Remove — and quietly
+   * make the wrong image canonical. Every action that changes the user's
+   * intent bumps this, and a read may only write state if it still owns it.
+   */
+  const currentRead = useRef(0);
 
   function pick(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
@@ -46,22 +55,40 @@ export default function PhotoField({
     event.target.value = "";
     if (!file) return;
 
+    const read = (currentRead.current += 1);
+
     if (!(PHOTO_MIME_TYPES as readonly string[]).includes(file.type)) {
+      setReading(false);
       setError("Choose a JPEG, PNG, or WebP image.");
       return;
     }
     if (file.size > MAX_PHOTO_BYTES) {
+      setReading(false);
       setError(`That image is larger than ${MAX_PHOTO_KB} KB. Choose a smaller one.`);
       return;
     }
 
+    setReading(true);
     const reader = new FileReader();
     reader.onload = () => {
+      if (read !== currentRead.current) return;
       setPhoto(typeof reader.result === "string" ? reader.result : "");
       setError(null);
+      setReading(false);
     };
-    reader.onerror = () => setError("That image could not be read.");
+    reader.onerror = () => {
+      if (read !== currentRead.current) return;
+      setError("That image could not be read.");
+      setReading(false);
+    };
     reader.readAsDataURL(file);
+  }
+
+  function remove() {
+    currentRead.current += 1;
+    setPhoto("");
+    setError(null);
+    setReading(false);
   }
 
   const describedByIds =
@@ -94,6 +121,7 @@ export default function PhotoField({
           type="file"
           accept={ACCEPT}
           onChange={pick}
+          aria-busy={reading || undefined}
           aria-invalid={invalid || error ? true : undefined}
           aria-describedby={describedByIds}
           className={FILE_INPUT}
@@ -101,15 +129,14 @@ export default function PhotoField({
 
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <p className="text-[12px] text-muted-foreground">
-            JPEG, PNG, or WebP · up to {MAX_PHOTO_KB} KB
+            {reading
+              ? "Reading image…"
+              : `JPEG, PNG, or WebP · up to ${MAX_PHOTO_KB} KB`}
           </p>
           {photo ? (
             <button
               type="button"
-              onClick={() => {
-                setPhoto("");
-                setError(null);
-              }}
+              onClick={remove}
               className={buttonClasses("ghost", "sm")}
             >
               <Trash2 className="h-4 w-4" strokeWidth={1.75} aria-hidden="true" />
