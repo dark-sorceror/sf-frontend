@@ -1,5 +1,10 @@
 import { z } from "zod";
-import type { ContactInput } from "./types";
+import {
+  ADDRESS_TYPES,
+  type AddressErrors,
+  type AddressInput,
+  type ContactInput,
+} from "./types";
 
 /**
  * Client/server-shared validation for the contact form.
@@ -55,6 +60,41 @@ export const MAX_PHOTO_DATA_URL_LENGTH =
 const PHOTO_DATA_URL =
   /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
 
+/* ------------------------------------------------------------------ */
+/* Addresses                                                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Mirrors `AddressCreate`: `type` is the only required part, every text field
+ * is optional and nullable, and there is deliberately no `id` — Zod strips
+ * unknown keys, so a stored address's id cannot reach the request body.
+ */
+export const addressSchema = z.object({
+  type: z.enum(ADDRESS_TYPES, {
+    message: "Choose Home, Work, or Other",
+  }),
+  address: optionalText(300, "Street address"),
+  city: optionalText(120, "City"),
+  state: optionalText(120, "State / region"),
+  postal_code: optionalText(20, "Postal code"),
+  country: optionalText(120, "Country"),
+}) satisfies z.ZodType<AddressInput, unknown>;
+
+/**
+ * The editor submits the whole collection as JSON in one hidden input, so the
+ * server action parses it deliberately before Zod sees it. Malformed JSON is
+ * handed through untouched: the schema then reports it, rather than an empty
+ * array silently wiping every address the contact had.
+ */
+export function parseAddressesJson(raw: string): unknown {
+  if (!raw.trim()) return [];
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return raw;
+  }
+}
+
 export const contactInputSchema = z.object({
   first_name: requiredText(100, "First name"),
   last_name: requiredText(100, "Last name"),
@@ -93,6 +133,7 @@ export const contactInputSchema = z.object({
       (value) => value === null || value.length <= MAX_PHOTO_DATA_URL_LENGTH,
       `Photo must be ${MAX_PHOTO_KB} KB or smaller`,
     ),
+  addresses: z.array(addressSchema).default([]),
 }) satisfies z.ZodType<ContactInput, unknown>;
 
 export type ContactFormValues = z.input<typeof contactInputSchema>;
@@ -104,6 +145,8 @@ export function zodFieldErrors(
   const fieldErrors: Partial<Record<keyof ContactInput, string>> = {};
   for (const issue of error.issues) {
     const key = issue.path[0];
+    // A problem inside one address is reported against that entry instead.
+    if (key === "addresses" && issue.path.length > 1) continue;
     if (typeof key === "string" && !(key in fieldErrors)) {
       fieldErrors[key as keyof ContactInput] = issue.message;
     }
@@ -111,12 +154,26 @@ export function zodFieldErrors(
   return fieldErrors;
 }
 
+/** Collapse the address issues into one message per entry, per field. */
+export function zodAddressErrors(error: z.ZodError): AddressErrors {
+  const addressErrors: AddressErrors = {};
+  for (const issue of error.issues) {
+    const [key, index, field] = issue.path;
+    if (key !== "addresses" || typeof index !== "number") continue;
+    if (typeof field !== "string") continue;
+    const entry = (addressErrors[index] ??= {});
+    entry[field as keyof AddressInput] ??= issue.message;
+  }
+  return addressErrors;
+}
+
 /* ------------------------------------------------------------------ */
 /* Form metadata — one source of truth for the fields and their limits */
 /* ------------------------------------------------------------------ */
 
 export interface ContactFieldSpec {
-  name: keyof ContactInput;
+  /** Addresses are a collection with their own editor, never a scalar input. */
+  name: Exclude<keyof ContactInput, "addresses">;
   label: string;
   type?: "text" | "email" | "tel" | "textarea" | "photo";
   required?: boolean;
@@ -131,7 +188,65 @@ export interface ContactFieldGroup {
   title: string;
   description: string;
   fields: ContactFieldSpec[];
+  /**
+   * Renders the dynamic address editor in place of a grid of scalar inputs.
+   * Addresses are a variable-length collection, which the metadata-driven
+   * `Field` was never meant to express — so the group carries a marker and
+   * the form hands that one section to a dedicated component.
+   */
+  addresses?: boolean;
 }
+
+/** One text input inside an address entry. `type` gets its own select. */
+export interface AddressFieldSpec {
+  name: Exclude<keyof AddressInput, "type">;
+  label: string;
+  maxLength: number;
+  required?: boolean;
+  placeholder?: string;
+  autoComplete?: string;
+  /** Column span inside the entry grid. */
+  wide?: boolean;
+}
+
+export const ADDRESS_FIELDS: AddressFieldSpec[] = [
+  {
+    name: "address",
+    label: "Street address",
+    maxLength: 300,
+    placeholder: "1 Market St, Suite 400",
+    autoComplete: "street-address",
+    wide: true,
+  },
+  {
+    name: "city",
+    label: "City",
+    maxLength: 120,
+    placeholder: "San Francisco",
+    autoComplete: "address-level2",
+  },
+  {
+    name: "state",
+    label: "State / region",
+    maxLength: 120,
+    placeholder: "CA",
+    autoComplete: "address-level1",
+  },
+  {
+    name: "postal_code",
+    label: "Postal code",
+    maxLength: 20,
+    placeholder: "94105",
+    autoComplete: "postal-code",
+  },
+  {
+    name: "country",
+    label: "Country",
+    maxLength: 120,
+    placeholder: "USA",
+    autoComplete: "country-name",
+  },
+];
 
 export const CONTACT_FIELD_GROUPS: ContactFieldGroup[] = [
   {
@@ -207,46 +322,10 @@ export const CONTACT_FIELD_GROUPS: ContactFieldGroup[] = [
     ],
   },
   {
-    title: "Address",
-    description: "Optional postal details.",
-    fields: [
-      {
-        name: "address",
-        label: "Street address",
-        maxLength: 300,
-        placeholder: "1 Market St, Suite 400",
-        autoComplete: "street-address",
-        wide: true,
-      },
-      {
-        name: "city",
-        label: "City",
-        maxLength: 120,
-        placeholder: "San Francisco",
-        autoComplete: "address-level2",
-      },
-      {
-        name: "state",
-        label: "State / region",
-        maxLength: 120,
-        placeholder: "CA",
-        autoComplete: "address-level1",
-      },
-      {
-        name: "postal_code",
-        label: "Postal code",
-        maxLength: 20,
-        placeholder: "94105",
-        autoComplete: "postal-code",
-      },
-      {
-        name: "country",
-        label: "Country",
-        maxLength: 120,
-        placeholder: "USA",
-        autoComplete: "country-name",
-      },
-    ],
+    title: "Addresses",
+    description: "Add as many as you need — home, work, or anywhere else.",
+    fields: [],
+    addresses: true,
   },
   {
     title: "Notes",
@@ -268,14 +347,24 @@ export const CONTACT_FIELDS: ContactFieldSpec[] = CONTACT_FIELD_GROUPS.flatMap(
   (group) => group.fields,
 );
 
-/** Pull the contact fields out of a submitted form, as raw strings. */
+/** The one input the address editor submits, holding the collection as JSON. */
+export const ADDRESSES_INPUT_NAME = "addresses";
+
+/**
+ * Pull the contact fields out of a submitted form, as raw strings. `addresses`
+ * comes back as the editor's JSON so a failed round trip can echo it straight
+ * back into the hidden input.
+ */
 export function formDataToValues(
   formData: FormData,
 ): Record<keyof ContactInput, string> {
-  return Object.fromEntries(
-    CONTACT_FIELDS.map((field) => [
-      field.name,
-      String(formData.get(field.name) ?? ""),
-    ]),
-  ) as Record<keyof ContactInput, string>;
+  return {
+    ...Object.fromEntries(
+      CONTACT_FIELDS.map((field) => [
+        field.name,
+        String(formData.get(field.name) ?? ""),
+      ]),
+    ),
+    [ADDRESSES_INPUT_NAME]: String(formData.get(ADDRESSES_INPUT_NAME) ?? ""),
+  } as Record<keyof ContactInput, string>;
 }

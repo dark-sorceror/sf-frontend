@@ -3,10 +3,12 @@ import {
   MAX_PHOTO_DATA_URL_LENGTH,
   contactInputSchema,
   formDataToValues,
+  parseAddressesJson,
+  zodAddressErrors,
   zodFieldErrors,
 } from "@/lib/contacts/schema";
 
-function values(overrides: Record<string, string> = {}) {
+function values(overrides: Record<string, unknown> = {}) {
   return {
     first_name: "Ada",
     last_name: "Lovelace",
@@ -115,6 +117,114 @@ describe("contactInputSchema photo", () => {
   });
 });
 
+describe("contactInputSchema addresses", () => {
+  const ADDRESS = {
+    type: "Home",
+    address: "1 Market St",
+    city: "San Francisco",
+    state: "CA",
+    postal_code: "94105",
+    country: "USA",
+  };
+
+  it("treats no addresses as a valid empty collection", () => {
+    expect(contactInputSchema.parse(values()).addresses).toEqual([]);
+  });
+
+  it("accepts every supported type", () => {
+    const parsed = contactInputSchema.parse(
+      values({
+        addresses: [
+          { ...ADDRESS, type: "Home" },
+          { ...ADDRESS, type: "Work" },
+          { ...ADDRESS, type: "Other" },
+        ],
+      }),
+    );
+
+    expect(parsed.addresses.map((entry) => entry.type)).toEqual([
+      "Home",
+      "Work",
+      "Other",
+    ]);
+  });
+
+  it("strips a server-assigned id rather than sending it back", () => {
+    // `AddressCreate` has no `id`, so one must never reach the request body.
+    const parsed = contactInputSchema.parse(
+      values({ addresses: [{ ...ADDRESS, id: 7 }] }),
+    );
+
+    expect(parsed.addresses[0]).not.toHaveProperty("id");
+    expect(parsed.addresses[0].type).toBe("Home");
+  });
+
+  it("accepts an address with nothing but a type, as the API does", () => {
+    const parsed = contactInputSchema.parse(
+      values({ addresses: [{ type: "Other" }] }),
+    );
+
+    expect(parsed.addresses[0]).toEqual({
+      type: "Other",
+      address: null,
+      city: null,
+      state: null,
+      postal_code: null,
+      country: null,
+    });
+  });
+
+  it("rejects a type outside the enum, against the entry that has it", () => {
+    const result = contactInputSchema.safeParse(
+      values({ addresses: [ADDRESS, { ...ADDRESS, type: "Vacation" }] }),
+    );
+
+    expect(zodAddressErrors(result.error!)).toEqual({
+      1: { type: "Choose Home, Work, or Other" },
+    });
+  });
+
+  it("blanks a whitespace-only part rather than rejecting it", () => {
+    const parsed = contactInputSchema.parse(
+      values({ addresses: [{ ...ADDRESS, address: "   " }] }),
+    );
+
+    expect(parsed.addresses[0].address).toBeNull();
+  });
+
+  it("enforces the length limits per entry", () => {
+    const result = contactInputSchema.safeParse(
+      values({
+        addresses: [ADDRESS, { ...ADDRESS, postal_code: "9".repeat(21) }],
+      }),
+    );
+
+    expect(zodAddressErrors(result.error!)).toEqual({
+      1: { postal_code: "Postal code must be 20 characters or fewer" },
+    });
+  });
+
+  it("reports malformed JSON instead of silently dropping every address", () => {
+    const result = contactInputSchema.safeParse(
+      values({ addresses: parseAddressesJson("{not json") }),
+    );
+
+    expect(result.success).toBe(false);
+    expect(zodFieldErrors(result.error!).addresses).toBeDefined();
+    expect(zodAddressErrors(result.error!)).toEqual({});
+  });
+});
+
+describe("parseAddressesJson", () => {
+  it("turns a blank input into an empty collection", () => {
+    expect(parseAddressesJson("")).toEqual([]);
+  });
+
+  it("hands malformed JSON through for the schema to reject", () => {
+    expect(parseAddressesJson("{not json")).toBe("{not json");
+  });
+});
+
 describe("formDataToValues", () => {
   it("pulls every known field out, defaulting to an empty string", () => {
     const formData = new FormData();
@@ -127,7 +237,7 @@ describe("formDataToValues", () => {
     expect(extracted.first_name).toBe("Grace");
     expect(extracted.last_name).toBe("");
     expect(Object.keys(extracted).sort()).toEqual(
-      CONTACT_FIELDS.map((field) => field.name).sort(),
+      [...CONTACT_FIELDS.map((field) => field.name), "addresses"].sort(),
     );
   });
 });

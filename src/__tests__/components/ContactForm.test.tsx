@@ -2,7 +2,7 @@ import React from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import ContactForm from "@/components/contacts/ContactForm";
-import { makeContact } from "../mocks/handlers";
+import { makeAddress, makeContact } from "../mocks/handlers";
 import type { FormState } from "@/lib/contacts/types";
 
 function renderForm(action: jest.Mock, contact?: ReturnType<typeof makeContact>) {
@@ -20,6 +20,16 @@ const PHOTO = "data:image/png;base64,iVBORw0KGgo=";
 
 function imageFile(type: string, bytes = 8, name = "ada") {
   return new File([new Uint8Array(bytes)], name, { type });
+}
+
+function stagedAddresses(container: HTMLElement): unknown {
+  return JSON.parse(
+    container.querySelector<HTMLInputElement>('input[name="addresses"]')!.value,
+  );
+}
+
+function submittedAddresses(formData: FormData): unknown {
+  return JSON.parse(String(formData.get("addresses")));
 }
 
 function stagedPhoto(container: HTMLElement): string {
@@ -49,7 +59,7 @@ describe("ContactForm", () => {
     expect(screen.getByLabelText(/first name/i)).toHaveValue("Ada");
     expect(screen.getByLabelText(/^email/i)).toHaveValue("ada@example.com");
     // Nulls become empty inputs rather than the string "null".
-    expect(screen.getByLabelText(/street address/i)).toHaveValue("");
+    expect(screen.getByLabelText(/notes/i)).toHaveValue("");
   });
 
   it("submits the entered values to the action", async () => {
@@ -236,5 +246,162 @@ describe("ContactForm photo reads", () => {
     act(() => pending[0].finish("data:image/png;base64,LATE="));
 
     expect(stagedPhoto(container)).toBe("");
+  });
+});
+
+describe("ContactForm addresses", () => {
+  const noop = () => jest.fn(async (): Promise<FormState> => ({ status: "idle" }));
+
+  const HOME = makeAddress();
+  const WORK = makeAddress({
+    id: 2,
+    type: "Work",
+    address: "1 Hacker Way",
+    city: "Menlo Park",
+    postal_code: "94025",
+  });
+
+  /** What the editor stages for a stored address: the server id dropped. */
+  const asInput = (address: typeof HOME) => ({
+    type: address.type,
+    address: address.address,
+    city: address.city,
+    state: address.state,
+    postal_code: address.postal_code,
+    country: address.country,
+  });
+
+  const addAddress = () =>
+    userEvent.click(screen.getByRole("button", { name: /add address/i }));
+
+  it("starts a new contact with no addresses", () => {
+    const { container } = renderForm(noop());
+
+    expect(screen.getByText("No addresses yet.")).toBeInTheDocument();
+    expect(stagedAddresses(container)).toEqual([]);
+  });
+
+  it("adds an address editor on demand", async () => {
+    const { container } = renderForm(noop());
+
+    await addAddress();
+
+    expect(screen.getByLabelText(/^type$/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/street address/i)).toBeInTheDocument();
+    expect(stagedAddresses(container)).toHaveLength(1);
+  });
+
+  it("offers Home, Work, and Other", async () => {
+    renderForm(noop());
+    await addAddress();
+
+    const select = screen.getByLabelText(/^type$/i);
+    expect(
+      Array.from(select.querySelectorAll("option")).map((o) => o.value),
+    ).toEqual(["Home", "Work", "Other"]);
+
+    await userEvent.selectOptions(select, "Work");
+    expect(select).toHaveValue("Work");
+  });
+
+  it("keeps several addresses independent of each other", async () => {
+    const { container } = renderForm(noop());
+    await addAddress();
+    await addAddress();
+
+    const streets = screen.getAllByLabelText(/street address/i);
+    await userEvent.type(streets[0], "1 Market St");
+    await userEvent.type(streets[1], "1 Hacker Way");
+    await userEvent.selectOptions(screen.getAllByLabelText(/^type$/i)[1], "Work");
+
+    expect(stagedAddresses(container)).toEqual([
+      expect.objectContaining({ type: "Home", address: "1 Market St" }),
+      expect.objectContaining({ type: "Work", address: "1 Hacker Way" }),
+    ]);
+  });
+
+  it("removes only the address asked for", async () => {
+    const { container } = renderForm(noop(), makeContact({ addresses: [HOME, WORK] }));
+
+    await userEvent.click(screen.getByRole("button", { name: "Remove address 1" }));
+
+    expect(stagedAddresses(container)).toEqual([asInput(WORK)]);
+    expect(screen.getAllByLabelText(/street address/i)).toHaveLength(1);
+  });
+
+  it("prefills the addresses a contact already has", () => {
+    const { container } = renderForm(noop(), makeContact({ addresses: [HOME, WORK] }));
+
+    const streets = screen.getAllByLabelText(/street address/i);
+    expect(streets[0]).toHaveValue("1 Market St");
+    expect(streets[1]).toHaveValue("1 Hacker Way");
+    expect(screen.getAllByLabelText(/^type$/i)[1]).toHaveValue("Work");
+    expect(stagedAddresses(container)).toEqual([asInput(HOME), asInput(WORK)]);
+  });
+
+  it("keeps every address and the photo when an unrelated field is edited", async () => {
+    const action = noop();
+    renderForm(action, makeContact({ addresses: [HOME, WORK], photo: PHOTO }));
+
+    await userEvent.type(screen.getByLabelText(/phone/i), "9");
+
+    const formData = await submit(action);
+    expect(submittedAddresses(formData)).toEqual([asInput(HOME), asInput(WORK)]);
+    expect(formData.get("photo")).toBe(PHOTO);
+  });
+
+  it("never sends a stored address's server id back to the API", async () => {
+    const action = noop();
+    renderForm(action, makeContact({ addresses: [HOME, WORK] }));
+
+    await userEvent.type(screen.getByLabelText(/phone/i), "9");
+
+    const submitted = submittedAddresses(await submit(action)) as unknown[];
+    expect(submitted).toHaveLength(2);
+    for (const entry of submitted) {
+      expect(entry).not.toHaveProperty("id");
+    }
+  });
+
+  it("drops a removed address from the submitted payload", async () => {
+    const action = noop();
+    renderForm(action, makeContact({ addresses: [HOME, WORK] }));
+
+    await userEvent.click(screen.getByRole("button", { name: "Remove address 1" }));
+
+    expect(submittedAddresses(await submit(action))).toEqual([asInput(WORK)]);
+  });
+
+  it("submits an empty array once every address is removed", async () => {
+    const action = noop();
+    renderForm(action, makeContact({ addresses: [HOME, WORK] }));
+
+    await userEvent.click(screen.getByRole("button", { name: "Remove address 2" }));
+    await userEvent.click(screen.getByRole("button", { name: "Remove address 1" }));
+
+    expect(screen.getByText("No addresses yet.")).toBeInTheDocument();
+    expect(submittedAddresses(await submit(action))).toEqual([]);
+  });
+
+  it("attaches a validation message to the entry it belongs to", async () => {
+    const action = jest.fn(
+      async (): Promise<FormState> => ({
+        status: "error",
+        message: "Please fix the highlighted fields.",
+        addressErrors: { 1: { address: "Street address is required" } },
+        values: { addresses: JSON.stringify([HOME, WORK]) },
+      }),
+    );
+    renderForm(action, makeContact({ addresses: [HOME, WORK] }));
+
+    await userEvent.click(screen.getByRole("button", { name: /create contact/i }));
+    await waitFor(() => expect(action).toHaveBeenCalled());
+
+    const streets = await screen.findAllByLabelText(/street address/i);
+    expect(streets[1]).toHaveAttribute("aria-invalid", "true");
+    expect(streets[0]).not.toHaveAttribute("aria-invalid");
+    expect(
+      (await screen.findAllByRole("alert")).map((node) => node.textContent),
+    ).toEqual(expect.arrayContaining(["Street address is required"]));
   });
 });

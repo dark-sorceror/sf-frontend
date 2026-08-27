@@ -8,11 +8,14 @@ import {
   createContact,
   deleteContact,
   replaceContact,
+  toAddressErrors,
   toFieldErrors,
 } from "@/lib/contacts/api";
 import {
   contactInputSchema,
   formDataToValues,
+  parseAddressesJson,
+  zodAddressErrors,
   zodFieldErrors,
 } from "@/lib/contacts/schema";
 import type { Contact, FormState } from "@/lib/contacts/types";
@@ -40,12 +43,18 @@ export async function saveContactAction(
 ): Promise<FormState> {
   const values = formDataToValues(formData);
 
-  const parsed = contactInputSchema.safeParse(values);
+  // Addresses arrive as JSON in one hidden input, so widen them back into a
+  // real array before the schema sees them.
+  const parsed = contactInputSchema.safeParse({
+    ...values,
+    addresses: parseAddressesJson(values.addresses),
+  });
   if (!parsed.success) {
     return {
       status: "error",
       message: "Please fix the highlighted fields.",
       fieldErrors: zodFieldErrors(parsed.error),
+      addressErrors: zodAddressErrors(parsed.error),
       values,
     };
   }
@@ -76,6 +85,7 @@ export async function saveContactAction(
           status: "error",
           message: "The API rejected these values.",
           fieldErrors: toFieldErrors(error),
+          addressErrors: toAddressErrors(error),
           values,
         };
       }

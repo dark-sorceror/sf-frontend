@@ -4,6 +4,14 @@ import type { ContactFieldSpec } from "@/lib/contacts/schema";
 const CONTROL =
   "w-full rounded-md border bg-input px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground/60 transition-colors focus:bg-input";
 
+/** Shared so the address editor's inputs cannot drift from the form's. */
+export function controlClasses(invalid = false): string {
+  const border = invalid
+    ? "border-destructive focus:border-destructive"
+    : "border-border focus:border-primary";
+  return `${CONTROL} ${border}`;
+}
+
 /**
  * One labelled form control, driven by the field metadata in
  * `lib/contacts/schema.ts` so the form and its validation cannot drift apart.
@@ -19,10 +27,6 @@ export default function Field({
 }) {
   const id = `field-${field.name}`;
   const errorId = `${id}-error`;
-  const borderClass = error
-    ? "border-destructive focus:border-destructive"
-    : "border-border focus:border-primary";
-
   const shared = {
     id,
     name: field.name,
@@ -33,7 +37,7 @@ export default function Field({
     autoComplete: field.autoComplete,
     "aria-invalid": error ? true : undefined,
     "aria-describedby": error ? errorId : undefined,
-    className: `${CONTROL} ${borderClass}`,
+    className: controlClasses(Boolean(error)),
   };
 
   return (
