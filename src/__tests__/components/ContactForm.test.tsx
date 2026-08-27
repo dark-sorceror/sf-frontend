@@ -363,6 +363,33 @@ describe("ContactForm addresses", () => {
     }
   });
 
+  it("keeps a validation message on its own entry after an earlier one goes", async () => {
+    const action = jest.fn(
+      async (): Promise<FormState> => ({
+        status: "error",
+        message: "Please fix the highlighted fields.",
+        addressErrors: { 1: { postal_code: "Postal code must be 20 characters or fewer" } },
+        values: { addresses: JSON.stringify([asInput(HOME), asInput(WORK)]) },
+      }),
+    );
+    renderForm(action, makeContact({ addresses: [HOME, WORK] }));
+
+    await userEvent.click(screen.getByRole("button", { name: /create contact/i }));
+    await waitFor(() => expect(action).toHaveBeenCalled());
+
+    // The message belongs to the second entry.
+    let postals = await screen.findAllByLabelText(/postal code/i);
+    expect(postals[0]).not.toHaveAttribute("aria-invalid");
+    expect(postals[1]).toHaveAttribute("aria-invalid", "true");
+
+    await userEvent.click(screen.getByRole("button", { name: "Remove address 1" }));
+
+    // It must follow that entry up to position 0, not stay on a stale index.
+    postals = screen.getAllByLabelText(/postal code/i);
+    expect(postals).toHaveLength(1);
+    expect(postals[0]).toHaveAttribute("aria-invalid", "true");
+  });
+
   it("drops a removed address from the submitted payload", async () => {
     const action = noop();
     renderForm(action, makeContact({ addresses: [HOME, WORK] }));

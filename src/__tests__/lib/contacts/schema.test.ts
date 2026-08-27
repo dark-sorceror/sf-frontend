@@ -16,11 +16,6 @@ function values(overrides: Record<string, unknown> = {}) {
     phone: "",
     company: "",
     job_title: "",
-    address: "",
-    city: "",
-    state: "",
-    postal_code: "",
-    country: "",
     notes: "",
     photo: "",
     ...overrides,
@@ -62,13 +57,31 @@ describe("contactInputSchema", () => {
 
   it("enforces the API's length limits", () => {
     const result = contactInputSchema.safeParse(
-      values({ first_name: "a".repeat(101), postal_code: "9".repeat(21) }),
+      values({ first_name: "a".repeat(101), company: "c".repeat(201) }),
     );
 
     expect(zodFieldErrors(result.error!)).toEqual({
       first_name: "First name must be 100 characters or fewer",
-      postal_code: "Postal code must be 20 characters or fewer",
+      company: "Company must be 200 characters or fewer",
     });
+  });
+});
+
+describe("contactInputSchema shape", () => {
+  it("parses to exactly the fields the API defines, and nothing else", () => {
+    // The five scalar address fields are gone from the contract; a leftover
+    // `.default(null)` would put them back into every create/replace body.
+    expect(Object.keys(contactInputSchema.parse(values())).sort()).toEqual([
+      "addresses",
+      "company",
+      "email",
+      "first_name",
+      "job_title",
+      "last_name",
+      "notes",
+      "phone",
+      "photo",
+    ]);
   });
 });
 

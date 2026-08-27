@@ -41,6 +41,25 @@ function toInput(address: Partial<Address>): AddressInput {
   };
 }
 
+/**
+ * Messages arrive keyed by the position each address held when it was
+ * submitted, so removing an earlier entry would otherwise leave them pointing
+ * at the wrong rows. Shift them to match the collection that remains.
+ */
+function rebaseErrors(
+  errors: AddressErrors | undefined,
+  removed: number,
+): AddressErrors | undefined {
+  if (!errors) return errors;
+  const next: AddressErrors = {};
+  for (const [key, entry] of Object.entries(errors)) {
+    const at = Number(key);
+    if (at === removed) continue;
+    next[at > removed ? at - 1 : at] = entry;
+  }
+  return next;
+}
+
 /** Seed from the JSON the form was given; anything unusable starts empty. */
 function parseInitial(raw: string): AddressInput[] {
   if (!raw.trim()) return [];
@@ -73,11 +92,26 @@ export default function AddressListEditor({
   errors?: AddressErrors;
 }) {
   const [addresses, setAddresses] = useState(() => parseInitial(defaultValue));
+  const [positionErrors, setPositionErrors] = useState(errors);
+  const [errorsSeen, setErrorsSeen] = useState(errors);
+
+  // Each submit delivers a fresh map, keyed by the positions it was given, and
+  // supersedes whatever the last one left behind. Adjusting during render is
+  // React's documented alternative to syncing props into state in an effect.
+  if (errorsSeen !== errors) {
+    setErrorsSeen(errors);
+    setPositionErrors(errors);
+  }
 
   function update(index: number, patch: Partial<AddressInput>) {
     setAddresses((current) =>
       current.map((address, i) => (i === index ? { ...address, ...patch } : address)),
     );
+  }
+
+  function removeAt(index: number) {
+    setAddresses((current) => current.filter((_, i) => i !== index));
+    setPositionErrors((current) => rebaseErrors(current, index));
   }
 
   return (
@@ -102,7 +136,7 @@ export default function AddressListEditor({
       ) : null}
 
       {addresses.map((address, index) => {
-        const entryErrors = errors?.[index];
+        const entryErrors = positionErrors?.[index];
         const typeId = `address-${index}-type`;
 
         return (
@@ -141,9 +175,7 @@ export default function AddressListEditor({
 
               <button
                 type="button"
-                onClick={() =>
-                  setAddresses((current) => current.filter((_, i) => i !== index))
-                }
+                onClick={() => removeAt(index)}
                 aria-label={`Remove address ${index + 1}`}
                 className={buttonClasses("ghost", "sm")}
               >
