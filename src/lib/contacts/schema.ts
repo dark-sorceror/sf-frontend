@@ -28,6 +28,33 @@ function requiredText(max: number, label: string) {
     .max(max, `${label} must be ${max} characters or fewer`);
 }
 
+/* ------------------------------------------------------------------ */
+/* Photo                                                               */
+/* ------------------------------------------------------------------ */
+
+/** The formats the picker accepts. GIF is deliberately not one of them. */
+export const PHOTO_MIME_TYPES = [
+  "image/jpeg",
+  "image/png",
+  "image/webp",
+] as const;
+
+/** Cap on the source file the user picks. */
+export const MAX_PHOTO_BYTES = 500 * 1024;
+export const MAX_PHOTO_KB = MAX_PHOTO_BYTES / 1024;
+
+/**
+ * The same cap expressed in data-URL characters, so the schema can reject an
+ * oversized photo on its own rather than trusting the picker's check: base64
+ * spends 4 characters per 3 bytes, plus room for the `data:image/…;base64,`
+ * prefix.
+ */
+export const MAX_PHOTO_DATA_URL_LENGTH =
+  Math.ceil(MAX_PHOTO_BYTES / 3) * 4 + 32;
+
+const PHOTO_DATA_URL =
+  /^data:image\/(?:jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/;
+
 export const contactInputSchema = z.object({
   first_name: requiredText(100, "First name"),
   last_name: requiredText(100, "Last name"),
@@ -52,6 +79,20 @@ export const contactInputSchema = z.object({
     .transform((value) => value || null)
     .nullable()
     .default(null),
+  photo: z
+    .string()
+    .trim()
+    .transform((value) => value || null)
+    .nullable()
+    .default(null)
+    .refine(
+      (value) => value === null || PHOTO_DATA_URL.test(value),
+      "Photo must be a JPEG, PNG, or WebP image",
+    )
+    .refine(
+      (value) => value === null || value.length <= MAX_PHOTO_DATA_URL_LENGTH,
+      `Photo must be ${MAX_PHOTO_KB} KB or smaller`,
+    ),
 }) satisfies z.ZodType<ContactInput, unknown>;
 
 export type ContactFormValues = z.input<typeof contactInputSchema>;
@@ -77,7 +118,7 @@ export function zodFieldErrors(
 export interface ContactFieldSpec {
   name: keyof ContactInput;
   label: string;
-  type?: "text" | "email" | "tel" | "textarea";
+  type?: "text" | "email" | "tel" | "textarea" | "photo";
   required?: boolean;
   maxLength: number;
   placeholder?: string;
@@ -93,6 +134,19 @@ export interface ContactFieldGroup {
 }
 
 export const CONTACT_FIELD_GROUPS: ContactFieldGroup[] = [
+  {
+    title: "Photo",
+    description: `Optional JPEG, PNG, or WebP, up to ${MAX_PHOTO_KB} KB.`,
+    fields: [
+      {
+        name: "photo",
+        label: "Photo",
+        type: "photo",
+        maxLength: MAX_PHOTO_DATA_URL_LENGTH,
+        wide: true,
+      },
+    ],
+  },
   {
     title: "Identity",
     description: "First name, last name, and email are required.",

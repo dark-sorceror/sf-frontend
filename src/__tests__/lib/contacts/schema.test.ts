@@ -1,5 +1,6 @@
 import {
   CONTACT_FIELDS,
+  MAX_PHOTO_DATA_URL_LENGTH,
   contactInputSchema,
   formDataToValues,
   zodFieldErrors,
@@ -19,6 +20,7 @@ function values(overrides: Record<string, string> = {}) {
     postal_code: "",
     country: "",
     notes: "",
+    photo: "",
     ...overrides,
   };
 }
@@ -65,6 +67,51 @@ describe("contactInputSchema", () => {
       first_name: "First name must be 100 characters or fewer",
       postal_code: "Postal code must be 20 characters or fewer",
     });
+  });
+});
+
+describe("contactInputSchema photo", () => {
+  const PAYLOAD = "iVBORw0KGgo=";
+
+  it.each(["jpeg", "png", "webp"])("accepts a %s data URL", (format) => {
+    const photo = `data:image/${format};base64,${PAYLOAD}`;
+    expect(contactInputSchema.parse(values({ photo })).photo).toBe(photo);
+  });
+
+  it("treats a blank photo as no photo", () => {
+    expect(contactInputSchema.parse(values()).photo).toBeNull();
+  });
+
+  it("rejects a format the picker does not offer", () => {
+    const result = contactInputSchema.safeParse(
+      values({ photo: `data:image/gif;base64,${PAYLOAD}` }),
+    );
+
+    expect(zodFieldErrors(result.error!).photo).toBe(
+      "Photo must be a JPEG, PNG, or WebP image",
+    );
+  });
+
+  it("rejects anything that is not a data URL", () => {
+    const result = contactInputSchema.safeParse(
+      values({ photo: "https://example.com/ada.png" }),
+    );
+
+    expect(zodFieldErrors(result.error!).photo).toBe(
+      "Photo must be a JPEG, PNG, or WebP image",
+    );
+  });
+
+  it("enforces the size cap on its own, without trusting the picker", () => {
+    const result = contactInputSchema.safeParse(
+      values({
+        photo: `data:image/png;base64,${"A".repeat(MAX_PHOTO_DATA_URL_LENGTH)}`,
+      }),
+    );
+
+    expect(zodFieldErrors(result.error!).photo).toBe(
+      "Photo must be 500 KB or smaller",
+    );
   });
 });
 
